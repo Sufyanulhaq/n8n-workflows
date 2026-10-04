@@ -3,6 +3,7 @@
 const { spawn, spawnSync } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
+const http = require("http");
 const os = require("os");
 const path = require("path");
 
@@ -26,9 +27,20 @@ const patchBody = (wf, patch) => {
 
 // The mock runs as its own process. If it ran inside this one, the blocking n8n calls below would
 // stop it from answering n8n's requests and every run would hang.
-const MOCK = "http://localhost:8140";
-const mockReset = (opts) => fetch(`${MOCK}/__reset`, { method: "POST", body: JSON.stringify(opts || {}) });
-const mockState = async () => (await fetch(`${MOCK}/__received`)).json();
+// Each call opens a fresh connection (agent: false). A reused keep alive connection goes stale while
+// this process is blocked waiting for n8n, the mock closes it after 5 seconds, and the next fetch
+// then fails with ECONNRESET. That happened on the first run after a clean install, when n8n is slow.
+const mockCall = (method, route, body) => new Promise((resolve, reject) => {
+  const req = http.request({ host: "localhost", port: 8140, path: route, method, agent: false }, (res) => {
+    let data = "";
+    res.on("data", (chunk) => (data += chunk));
+    res.on("end", () => resolve(data ? JSON.parse(data) : null));
+  });
+  req.on("error", reject);
+  req.end(body);
+});
+const mockReset = (opts) => mockCall("POST", "/__reset", JSON.stringify(opts || {}));
+const mockState = () => mockCall("GET", "/__received");
 
 const fromRun = (out, node) => {
   const d = JSON.parse(out.slice(out.indexOf("{")));
