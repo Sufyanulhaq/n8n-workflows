@@ -1,0 +1,366 @@
+{
+  "name": "Lead intake and scoring",
+  "nodes": [
+    {
+      "id": "n3",
+      "name": "Lead webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        160
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-intake",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "lead-intake-demo"
+    },
+    {
+      "id": "n4",
+      "name": "Test run",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        440
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "n11",
+      "name": "Sample lead (test only)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        440
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "n5",
+              "name": "name",
+              "value": "Dana Reyes",
+              "type": "string"
+            },
+            {
+              "id": "n6",
+              "name": "company",
+              "value": "Northwind Clinics",
+              "type": "string"
+            },
+            {
+              "id": "n7",
+              "name": "email",
+              "value": "dana@northwindclinics.example",
+              "type": "string"
+            },
+            {
+              "id": "n8",
+              "name": "need",
+              "value": "We want a chatbot connected to our CRM and email so urgent questions reach staff.",
+              "type": "string"
+            },
+            {
+              "id": "n9",
+              "name": "budget_amount",
+              "value": "8000",
+              "type": "number"
+            },
+            {
+              "id": "n10",
+              "name": "timeline_months",
+              "value": "0.5",
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "n2",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "n1",
+              "name": "base_url",
+              "value": "http://localhost:8140",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "n12",
+      "name": "Score lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\n// Same visible rules as the Lead Qualification Agent repo. Change the numbers to suit your business.\nconst src = $input.first().json;\nconst lead = src.body || src;\nconst text = String(lead.need || '').toLowerCase();\nconst SERVICES = {\n  chatbot: ['chatbot', 'chat bot', 'assistant', 'support bot', 'customer support'],\n  automation: ['automate', 'automation', 'workflow', 'n8n', 'zapier', 'repetitive', 'manual'],\n  integration: ['integrat', 'api', 'webhook', 'connect', 'crm', 'sync'],\n  'web app': ['web app', 'website', 'dashboard', 'portal', 'saas', 'mvp', 'admin panel', 'platform'],\n  documents: ['pdf', 'document', 'invoice', 'contract'],\n  email: ['email', 'inbox'],\n  data: ['scrap', 'spreadsheet', 'report', 'etl', 'data pipeline'],\n};\nconst services = Object.keys(SERVICES).filter((k) => SERVICES[k].some((w) => text.includes(w))).sort();\nconst reasons = [];\nlet fit = services.length >= 2 ? 25 : services.length === 1 ? 18 : 5;\nreasons.push(services.length ? 'clear need: ' + services.join(', ') : 'need is vague');\nlet budget = 8; const amount = lead.budget_amount;\nif (amount != null && amount !== '') {\n  const a = Number(amount);\n  budget = a >= 5000 ? 30 : a >= 2000 ? 24 : a >= 1000 ? 18 : a >= 500 ? 10 : 4;\n  reasons.push('budget of ' + a);\n} else reasons.push('budget not given');\nlet timeline = 8; const months = lead.timeline_months;\nif (months != null && months !== '') {\n  const m = Number(months);\n  timeline = m <= 1 ? 25 : m <= 3 ? 15 : 6;\n  reasons.push(m <= 1 ? 'wants to start within a month' : m <= 3 ? 'wants to start within three months' : 'timeline is more than three months away');\n} else reasons.push('no timeline given');\nconst contact = (lead.email ? 12 : 0) + (lead.company ? 4 : 0) + (lead.name ? 4 : 0);\nconst missing = ['email', 'company', 'name'].filter((k) => !lead[k]);\nreasons.push(missing.length ? 'missing ' + missing.join(', ') : 'full contact details');\nconst total = fit + budget + timeline + contact;\nlet label = total >= 70 ? 'Hot' : total >= 45 ? 'Warm' : 'Cold';\nif (!lead.email && label !== 'Cold') { label = 'Cold'; reasons.push('held at Cold because there is no email to follow up on'); }\nreturn [{ json: { ...lead, services, score: total, label, reasons } }];\n"
+      }
+    },
+    {
+      "id": "n14",
+      "name": "Is it hot?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "n13",
+              "leftValue": "={{ $json.label }}",
+              "rightValue": "Hot",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n15",
+      "name": "Create CRM contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        180
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.base_url }}/crm/contacts",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ 'lead:' + $json.email }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $json.name, company: $json.company, email: $json.email, score: $json.score, label: $json.label, reasons: $json.reasons }) }}",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 500,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n16",
+      "name": "Tell the sales team",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        180
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.base_url }}/slack",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: 'Hot lead ' + $('Score lead').first().json.score + '/100: ' + $('Score lead').first().json.name + ' at ' + $('Score lead').first().json.company }) }}",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 500,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n17",
+      "name": "Add to nurture list",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        420
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.base_url }}/sheets",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ row: [$json.name || '', $json.company || '', $json.email || '', $json.score, $json.label] }) }}",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 500,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n18",
+      "name": "Reply",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1600,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ label: $('Score lead').first().json.label, score: $('Score lead').first().json.score, reasons: $('Score lead').first().json.reasons }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Lead webhook": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test run": {
+      "main": [
+        [
+          {
+            "node": "Sample lead (test only)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sample lead (test only)": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Score lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score lead": {
+      "main": [
+        [
+          {
+            "node": "Is it hot?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is it hot?": {
+      "main": [
+        [
+          {
+            "node": "Create CRM contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Add to nurture list",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create CRM contact": {
+      "main": [
+        [
+          {
+            "node": "Tell the sales team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tell the sales team": {
+      "main": [
+        [
+          {
+            "node": "Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to nurture list": {
+      "main": [
+        [
+          {
+            "node": "Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

@@ -1,0 +1,487 @@
+{
+  "name": "Signed order webhook, checked and sent on",
+  "nodes": [
+    {
+      "id": "n19",
+      "name": "Order webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        120
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "orders",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "webhookId": "orders-demo"
+    },
+    {
+      "id": "n20",
+      "name": "Test run",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        440
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "n23",
+      "name": "Sample order (test only)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        440
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "n21",
+              "name": "rawBody",
+              "value": "{\"id\":\"ORD-7001\",\"customer\":{\"name\":\"Priya Nair\",\"email\":\"priya.nair@example.com\"},\"items\":[{\"sku\":\"DESK-120\",\"name\":\"Standing desk\",\"qty\":1,\"unit_price\":349},{\"sku\":\"CBL-02\",\"name\":\"Cable kit\",\"qty\":2,\"unit_price\":6.5}],\"currency\":\"GBP\",\"total\":362}",
+              "type": "string"
+            },
+            {
+              "id": "n22",
+              "name": "timestamp",
+              "value": "={{ String(Math.floor(Date.now() / 1000)) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "n24",
+      "name": "Sign (test only)",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        440,
+        440
+      ],
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.timestamp + '.' + $json.rawBody }}",
+        "dataPropertyName": "signature",
+        "secret": "demo-secret-change-me",
+        "encoding": "hex"
+      }
+    },
+    {
+      "id": "n25",
+      "name": "Read the request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\n// A webhook call carries the exact bytes that were sent as a binary attachment, and the headers as fields.\n// The signature covers those exact bytes, so re-serialising the parsed JSON would not match.\n// The test run carries the same three things as plain fields.\nconst item = $input.first().json;\nconst isWebhook = !!item.headers;\nlet rawBody = item.rawBody;\nif (isWebhook) {\n  try { rawBody = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8'); }\n  catch (e) { rawBody = JSON.stringify(item.body); }\n}\nconst timestamp = isWebhook ? item.headers['x-timestamp'] : item.timestamp;\nconst received = isWebhook ? item.headers['x-signature'] : 'sha256=' + item.signature;\nreturn [{ json: { rawBody, timestamp, received } }];\n"
+      }
+    },
+    {
+      "id": "n26",
+      "name": "Compute expected signature",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.timestamp + '.' + $json.rawBody }}",
+        "dataPropertyName": "expected",
+        "secret": "demo-secret-change-me",
+        "encoding": "hex"
+      }
+    },
+    {
+      "id": "n27",
+      "name": "Check and parse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst j = $input.first().json;\nconst fail = (status, error) => [{ json: { ok: false, status, error } }];\nif (!j.timestamp || !j.received) return fail(401, 'missing timestamp or signature');\nif (Math.abs(Date.now() / 1000 - Number(j.timestamp)) > 300) return fail(401, 'timestamp is too old or too far in the future');\n// Note: this string comparison is not constant time. See the README for what that means.\nif ('sha256=' + j.expected !== j.received) return fail(401, 'signature does not match');\nlet o;\ntry { o = JSON.parse(j.rawBody); } catch (e) { return fail(400, 'body is not valid JSON'); }\nif (!o.id || !o.customer || !o.customer.email || !Array.isArray(o.items) || !o.items.length) return fail(422, 'order is missing fields');\nconst sum = Math.round(o.items.reduce((s, i) => s + i.qty * i.unit_price, 0) * 100) / 100;\nif (Math.abs(sum - o.total) > 0.01) return fail(422, 'total ' + o.total + ' does not match the items, which add up to ' + sum);\nreturn [{ json: { ok: true, order: o } }];\n"
+      }
+    },
+    {
+      "id": "n29",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1320,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "n28",
+              "name": "base_url",
+              "value": "http://localhost:8140",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "n31",
+      "name": "Is it valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "n30",
+              "leftValue": "={{ $('Check and parse').first().json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n32",
+      "name": "Send to CRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1780,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.base_url }}/crm/contacts",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Check and parse').first().json.order.id + ':crm' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ email: $('Check and parse').first().json.order.customer.email, name: $('Check and parse').first().json.order.customer.name, last_order_id: $('Check and parse').first().json.order.id }) }}",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 500,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n33",
+      "name": "Send to accounting",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2020,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.base_url }}/accounting/invoices",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Check and parse').first().json.order.id + ':accounting' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ reference: $('Check and parse').first().json.order.id, currency: $('Check and parse').first().json.order.currency, lines: $('Check and parse').first().json.order.items, status: 'draft' }) }}",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 500,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n34",
+      "name": "Tell Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2260,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.base_url }}/slack",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: 'New order ' + $('Check and parse').first().json.order.id + ': ' + $('Check and parse').first().json.order.total + ' ' + $('Check and parse').first().json.order.currency }) }}",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 500,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n35",
+      "name": "Summarise delivery",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2500,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\n// Each step passes its item on, even after its retries ran out, so the answer can say what failed.\nconst failed = ['Send to CRM', 'Send to accounting', 'Tell Slack'].filter((n) => $(n).first().json.error);\nreturn [{ json: { status: 202, body: { accepted: true, order: $('Check and parse').first().json.order.id, failed } } }];\n"
+      }
+    },
+    {
+      "id": "n36",
+      "name": "Refusal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        460
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const j = $('Check and parse').first().json; return [{ json: { status: j.status, body: { error: j.error } } }];"
+      }
+    },
+    {
+      "id": "n37",
+      "name": "Reply",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2740,
+        320
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "responseCode": "={{ $json.status }}"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Order webhook": {
+      "main": [
+        [
+          {
+            "node": "Read the request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test run": {
+      "main": [
+        [
+          {
+            "node": "Sample order (test only)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sample order (test only)": {
+      "main": [
+        [
+          {
+            "node": "Sign (test only)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign (test only)": {
+      "main": [
+        [
+          {
+            "node": "Read the request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read the request": {
+      "main": [
+        [
+          {
+            "node": "Compute expected signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute expected signature": {
+      "main": [
+        [
+          {
+            "node": "Check and parse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check and parse": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Is it valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is it valid?": {
+      "main": [
+        [
+          {
+            "node": "Send to CRM",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Refusal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to CRM": {
+      "main": [
+        [
+          {
+            "node": "Send to accounting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to accounting": {
+      "main": [
+        [
+          {
+            "node": "Tell Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tell Slack": {
+      "main": [
+        [
+          {
+            "node": "Summarise delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarise delivery": {
+      "main": [
+        [
+          {
+            "node": "Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refusal": {
+      "main": [
+        [
+          {
+            "node": "Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
